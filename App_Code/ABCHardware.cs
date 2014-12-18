@@ -15,6 +15,9 @@ public class ABCPOS
         Sales SalesManager = new Sales();
         try
         {
+            if (ABCSale.SaleItems.Count < 1)
+                throw new EmptySaleException("Sale has no purchased items.");
+
             SaleNumber = SalesManager.AddSale(ABCSale);
         }
         catch (SqlException sqlEx)
@@ -108,4 +111,10 @@ public class ABCPOS
 public class InsufficientStockException : SystemException
 {
     public InsufficientStockException(SqlException sqlEx) : base(sqlEx.Message, sqlEx) {}
+}
+
+public class EmptySaleException : SystemException
+{
+    public EmptySaleException() : base() { }
+    public EmptySaleException(String message) : base(message) { }
 }

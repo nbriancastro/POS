@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Collections.Specialized;
-using System.Configuration;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Web;
@@ -12,6 +11,12 @@ using System.Web.UI.WebControls;
 
 namespace Sales
 {
+    public enum ActionResult
+    {
+        Success = 0,
+        Error
+    }
+
     [SuppressMessage("ReSharper", "ConvertToAutoProperty")]
     public class PurchaseItem
     {
@@ -99,6 +104,33 @@ namespace Sales
             }
         }
 
+        private Decimal GetCurrentGSTPercentage()
+        {
+            System.Collections.Specialized.NameValueCollection appSettings = System.Configuration.ConfigurationManager.AppSettings;
+            return Convert.ToDecimal(appSettings["GSTRate"] ?? "0");
+        }
+        private IList<PurchaseItem> GetItems()
+        {
+            IList<PurchaseItem> saleItems = HttpContext.Current.Session["purchase"] as IList<PurchaseItem>;
+            return saleItems ?? new List<PurchaseItem>();
+        }
+        private IList<PurchaseItem> GetPurchasedItems(IList<PurchaseItem> saleItems)
+        {
+            return saleItems.Where(purchase => purchase.Quantity > 0).ToList();
+        }
+        private void ShowResult(ActionResult result, String message, String heading = null)
+        {
+            const string alertClassTemplate = "alert-{0}";
+            const string scriptTemplate = "$(document).ready(function(){{ $('.alert-{0}').show().delay(5000).fadeOut(3000); }});";
+            String alertClass = String.Format(alertClassTemplate, result.ToString().ToLower());
+            String script = String.Format(scriptTemplate, result.ToString().ToLower());
+
+            AlertControl1.HeadingText = heading ?? result.ToString();
+            AlertControl1.Message = message;
+            AlertControl1.AlertClass = String.Format(alertClass, result.ToString().ToLower());
+            Page.ClientScript.RegisterClientScriptBlock(this.GetType(), "ActionResultScript", script, true);
+        }
+
         protected void Page_Load(object sender, EventArgs e)
         {
             Page.ClientScript.RegisterClientScriptBlock(this.GetType(), "HideFlashMessages", "$(document).ready(function () { $('.alert').hide(); });", true);
@@ -142,60 +174,48 @@ namespace Sales
 
         protected void ProcessButton_Click(object sender, EventArgs e)
         {
-            Decimal gstRate = 0.5M;
-            NameValueCollection appSettings = ConfigurationManager.AppSettings;
-            if (appSettings.Count > 0)
-                gstRate = Convert.ToDecimal(appSettings["GSTRate"]);
-
-            Sale abcSale = new Sale(
+            // Create Sale header object
+            Sale ABCSale = new Sale(
                 saleDate: DateTime.Now,
                 salesPerson: HttpContext.Current.User.Identity.Name,
                 customerId: int.Parse(CustomerDropdown.SelectedValue),
-                gstRate: gstRate);
+                gstRate: GetCurrentGSTPercentage());
 
-            IList<PurchaseItem> purchaseItems = HttpContext.Current.Session["purchase"] as IList<PurchaseItem>;
-            if (purchaseItems != null)
-            {
-                var purchases = purchaseItems.Where(purchase => purchase.Quantity > 0).ToList();
-                foreach (PurchaseItem purchase in purchases)
-                {
-                    abcSale.AddItem(purchase.ItemCode, purchase.Quantity);
-                }
-            }
+            // Add Sale Items objects from session to Sale header
+            var items = GetItems();
+            var purchasedItems = GetPurchasedItems(items);
+            foreach (PurchaseItem purchase in purchasedItems)
+                ABCSale.AddItem(purchase.ItemCode, purchase.Quantity);
 
-            ABCPOS abcHardware = new ABCPOS();
+            ABCPOS ABCHardware = new ABCPOS();
             Int32 saleNumber = 0;
             try
             {
-                saleNumber = abcHardware.ProcessSale(abcSale);
+                // Commit Sale to persistence
+                saleNumber = ABCHardware.ProcessSale(ABCSale);
+
+                // Reset session objects
                 Session.Remove("subtotal");
                 Session.Remove("gst");
                 Session.Remove("saletotal");
-                CustomerDropdown.SelectedIndex = 0;
 
+                // Reset UI values
+                CustomerDropdown.SelectedIndex = 0;
                 AddressTextBox.Text = String.Empty;
                 CityTextBox.Text = String.Empty;
                 ProvinceTextBox.Text = String.Empty;
                 PostalTextBox.Text = String.Empty;
-
-                if (purchaseItems != null)
-                {
-                    purchaseItems.ToList().ForEach(item => { item.Quantity = 0; item.ItemTotal = 0; });
-                    Repeater1.DataSource = purchaseItems;
-                }
+                items.ToList().ForEach(item => { item.Quantity = 0; item.ItemTotal = 0; });
+                Repeater1.DataSource = items;
                 Page.DataBind();
 
-                AlertControl1.HeadingText = "Success";
-                AlertControl1.Message = String.Format("Sale has been processed. <b>Sale&nbsp;Number:&nbsp;</b>{0}", saleNumber.ToString());
-                AlertControl1.AlertClass = "alert-success";
-                Page.ClientScript.RegisterClientScriptBlock(this.GetType(), "ShowSuccessScript", "$(document).ready(function () { $('.alert-success').show().delay(5000).fadeOut(3000); });", true);
+                // Show success message
+                var message = String.Format("Sale has been processed. <b>Sale&nbsp;Number:&nbsp;</b>{0}", saleNumber);
+                ShowResult(ActionResult.Success, message);
             }
-            catch (InsufficientStockException ex)
+            catch (Exception ex)
             {
-                AlertControl1.HeadingText = "Error";
-                AlertControl1.Message = ex.Message;
-                AlertControl1.AlertClass = "alert-error";
-                Page.ClientScript.RegisterClientScriptBlock(this.GetType(), "ShowErrorScript", "$(document).ready(function () { $('.alert-error').show().delay(5000).fadeOut(3000); });", true);
+                ShowResult(ActionResult.Error, ex.Message);
             }
         }
 
@@ -232,7 +252,7 @@ namespace Sales
             Decimal gst = 0M;
             Decimal gstRate = 0.5M;
 
-            NameValueCollection appSettings = ConfigurationManager.AppSettings;
+            System.Collections.Specialized.NameValueCollection appSettings = System.Configuration.ConfigurationManager.AppSettings;
             if (appSettings.Count > 0)
                 gstRate = Convert.ToDecimal(appSettings["GSTRate"]);
 

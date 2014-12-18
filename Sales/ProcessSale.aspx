@@ -61,7 +61,7 @@
             // Assign a change-event handler and numeric filter for each quantity textbox
             $("#<%= Panel1.ClientID %> :text").change(function (e) {
                 QuantityTextChange(this, e);
-            }).autoNumeric('init', { mDec: '0' });
+            }).autoNumeric('init', { mDec: '0', wEmpty: 'zero' });
 
         });
     </script>
